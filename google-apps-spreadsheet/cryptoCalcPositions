@@ -1,0 +1,723 @@
+/**
+ *  Author: Jakob Ramirez
+ *  Desc: Track open crypto positions, log open/closed positions, Calculate desired risk reward price levels,
+ *        Pull current price of desired crypto to see gains/loss
+ *  Language: Google Apps Scripts
+ *  Modified File: cryptoCalcPositions
+ */
+
+
+/**
+ *  Creates menu for risk/reward calc when opening the spreadsheet
+ *  @param e opening of spreadsheet
+ */
+function onOpen(e){
+ var ui = SpreadsheetApp.getUi();
+ ui.createMenu('Advanced')
+ .addItem('Scale in', 'scale_in')
+ .addItem('Scale out', 'scale_out')
+ .addSeparator()
+ .addSubMenu(ui.createMenu('Risk/Reward For All Positions')
+             .addItem('Calculate Risk/Reward 0.25%','riskReward_calc_025')
+             .addItem('Calculate Risk/Reward 0.50%','riskReward_calc_050')
+             .addItem('Calculate Risk/Reward 0.75%','riskReward_calc_075')
+             .addItem('Calculate Risk/Reward 1.00%','riskReward_calc_100')
+             .addItem('Calculate Risk/Reward 1.25%','riskReward_calc_125')
+             .addItem('Calculate Risk/Reward 1.50%','riskReward_calc_150')
+             .addItem('Calculate Risk/Reward 1.75%','riskReward_calc_175')
+             .addItem('Calculate Risk/Reward 2.00%','riskReward_calc_200')
+             .addItem('Calculate Risk/Reward 2.25%','riskReward_calc_225')
+             .addItem('Calculate Risk/Reward 2.50%','riskReward_calc_250'))
+ .addSeparator()
+ .addItem('Calculate Risk/Reward Symbol','changeSymbolRR')
+ .addToUi();
+}
+
+/**
+ *  Function runs when box gets checked/unchecked, equivalent to new positions/exiting position
+ *  @param e editing spreadsheet
+ */
+function onEdit(e)
+{
+  var editRange = { //A4:A7
+    top : 4,
+    bottom : 7,
+    left : 1,
+    right :1
+  };
+
+  // Exit if we're out of range
+  var thisRow = e.range.getRow();
+  if (thisRow < editRange.top || thisRow > editRange.bottom) return;
+
+  var thisCol = e.range.getColumn();
+  if (thisCol < editRange.left || thisCol > editRange.right) return;
+
+  //run if in range
+  var sheetInd = (e.range.getSheet().getIndex())-1;
+  if(sheetInd == 0){
+    boxChecked(thisRow, thisCol,sheetInd);
+  }
+
+}
+
+/**
+ *  Updates journal spreadsheet runner for new/closing positions
+ *  @param row correct row of box checked/unchecked
+ *  @param col correct col of box checked/unchecked
+ *  @param sheetInd index of sheet edited
+ */
+function boxChecked(row,col,sheetInd){
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[sheetInd];
+  var cell = sheet.getRange(row, col).getValue();
+
+  if (cell == true){
+    newJournal(row);
+  }
+  else{
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.prompt('Close position', 'Price exited', ui.ButtonSet.OK);
+    var exitPrice;
+    if (response.getSelectedButton() == ui.Button.OK) {
+      exitPrice = response.getResponseText();
+      closeJournal(row,exitPrice);
+    }
+  }
+}
+
+
+
+/**
+ *  Initial journal entry for new positions when user checks box
+ *  @param row row of box checked
+ */
+function newJournal(row) {
+  //Positions
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //Journal Data
+  var ssJournal = SpreadsheetApp.openById('11_npO6TNL8FwYgG78cYJxlnX3h7zf139O4vQC6lch-A');
+  var sheetJournal = ssJournal.getSheetByName('sheet1');
+  //get values to log in journal
+  var symbol = sheet.getRange(row, 2).getValue();         //ticker
+  var positionType = sheet.getRange(row, 3).getValue();
+  var quantity = sheet.getRange(row, 4).getValue();
+  var date = sheet.getRange(row, 6).getValue();
+  var avgFill = sheet.getRange(row, 8).getValue();
+  //log in journal
+  //start at A4 to find last entry
+  var range = sheetJournal.getRange("A4:A").getValues();
+  var journRow = (range.filter(String).length)+4;       //row to enter on journal
+  //plots
+  sheetJournal.getRange(journRow,1,1,19).setBackground('yellow');
+  sheetJournal.getRange(journRow, 1).setValue(date);
+  sheetJournal.getRange(journRow, 2).setValue(positionType);
+  sheetJournal.getRange(journRow, 3).setValue('open');
+  sheetJournal.getRange(journRow, 4).setValue(symbol);
+  sheetJournal.getRange(journRow, 6).setValue('buy limit');
+  sheetJournal.getRange(journRow, 7).setValue(quantity);
+  sheetJournal.getRange(journRow, 8).setValue(avgFill);
+
+}
+
+/**
+ *  Logs close in journal spreadsheet when user unchecks box
+ *  @param row row of box unchecked
+ *  @param exitPrice price sold at
+ */
+function closeJournal(row, exitPrice){
+  //Positions
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //Journal Data
+  var ssJournal = SpreadsheetApp.openById('11_npO6TNL8FwYgG78cYJxlnX3h7zf139O4vQC6lch-A');
+  var sheetJournal = ssJournal.getSheetByName('sheet1');
+  //from positions to confirm correct journal row
+  var symbol = sheet.getRange(row, 2).getValue();         //ticker
+  var quantity = sheet.getRange(row, 4).getValue();
+  var date = sheet.getRange(row, 6).getValue();
+  //find correct journalrow to close open position
+  var range = sheetJournal.getRange("A4:A").getValues();
+  var journLength = (range.filter(String).length);       //iterate length
+  var journRow = 3;
+  var journDate = sheetJournal.getRange(4, 1, journLength).getValues();
+  var journSym = sheetJournal.getRange(4, 4, journLength).getValues();
+  var journQuant = sheetJournal.getRange(4, 7, journLength).getValues();
+  //once ticker,date, and quantity are the same position is found and closed
+  for(var i=0; i < journLength; i++){
+    ++journRow;
+    if(symbol == journSym[i][0]){
+      if(quantity == journQuant[i][0]){
+        if(date == journDate[i][0]){
+          sheetJournal.getRange(journRow,1,1,19).setBackground('red');
+          sheetJournal.getRange(journRow, 11).setValue(exitPrice);
+          sheetJournal.getRange(journRow, 3).setValue('closed');
+        }
+      }
+    }
+  }
+}
+
+/**
+ *  Scale in function from sub-menu
+ *  Active box selected determines which position gets scaled in
+ *  User inputs new amount bought and price
+ *  Updates cryptoCalcPositions spreadsheet and crypto journal spreadsheet
+ */
+function scale_in(){
+  //Positions
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //enter new data of position
+  var ui = SpreadsheetApp.getUi();
+  var newPrice_r = ui.prompt('Scale Into Position', 'New Price Bought At', ui.ButtonSet.OK);
+  var newPrice, newQuantity;
+  if (newPrice_r.getSelectedButton() == ui.Button.OK) {
+    newPrice = newPrice_r.getResponseText();
+    var newQuantity_r = ui.prompt('Scale Into Position', 'New Quantity Bought', ui.ButtonSet.OK);
+    if(newQuantity_r.getSelectedButton() == ui.Button.OK){
+      newQuantity = newQuantity_r.getResponseText();
+    }
+    else { return;}
+  }
+  else{ return; }
+  //get active row to find editedd position
+  var actvCell = SpreadsheetApp.getActiveSheet().getActiveCell();
+  var row = actvCell.getRow();
+  var symbol = sheet.getRange(row,2).getValue();
+  //original core position data
+  var origQuantity = sheet.getRange(row, 4).getValue();
+  var origPrice = sheet.getRange(row, 8).getValue();
+  //new order scaled in with original core
+  var endPrice = calcCore(Number(origPrice), Number(origQuantity),Number(newPrice),Number(newQuantity));
+  var endQuantity = Number(origQuantity)+Number(newQuantity);
+  //set new core in positions
+  sheet.getRange(row, 4).setValue(endQuantity);
+  sheet.getRange(row, 8).setValue(endPrice);
+  updateJournal(row,endPrice,endQuantity,0);
+}
+
+/**
+ *  Scale out function from sub menu
+ *  Active box selected determines which position gets scaled out
+ *  User inputs amount sold and price
+ *  Updates cryptoCalcPositions spreadsheet and crypto journal spreadsheet
+ */
+function scale_out(){
+  //Positions
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //enter data of position sold
+  var ui = SpreadsheetApp.getUi();
+  var newPrice_r = ui.prompt('Scale Out Position', 'Price Sold At', ui.ButtonSet.OK);
+  var newPrice, newQuantity;
+  if (newPrice_r.getSelectedButton() == ui.Button.OK) {
+    newPrice = newPrice_r.getResponseText();
+    var newQuantity_r = ui.prompt('Scale Out Position', 'Quantity Sold', ui.ButtonSet.OK);
+    if(newQuantity_r.getSelectedButton() == ui.Button.OK){
+      newQuantity = newQuantity_r.getResponseText();
+    }
+    else { return;}
+  }
+  else{ return; }
+  //get active row to find edited position
+  var actvCell = SpreadsheetApp.getActiveSheet().getActiveCell();
+  var row = actvCell.getRow();
+  var symbol = sheet.getRange(row,2).getValue();
+  //original core
+  var origQuantity = sheet.getRange(row, 4).getValue();
+  var origPrice = sheet.getRange(row, 8).getValue();
+  //new quantity
+  var endQuantity = Number(origQuantity)-Number(newQuantity);
+  //add closed position to journal
+  updateJournal(row,newPrice,newQuantity,1);
+  //update positions sheet data
+  sheet.getRange(row, 4).setValue(endQuantity);
+}
+
+/**
+ *  Update journal for scale in/out depending on paramters
+ *  @param row row of position on spreadsheet
+ *  @param endPrice average fill
+ *  @param endQuantity quantity of position held
+ *  @param scale determines whether scale in or scale out
+ */
+function updateJournal(row,endPrice,endQuantity,scale){    //if else statement for scale in or out update
+  //Positions Data
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //position edited
+  var symbol = sheet.getRange(row, 2).getValue();
+  var origPrice = sheet.getRange(row, 8).getValue();
+  var origQuantity = sheet.getRange(row, 4).getValue();
+  //Journal Data
+  var ssJournal = SpreadsheetApp.openById('11_npO6TNL8FwYgG78cYJxlnX3h7zf139O4vQC6lch-A');
+  var sheetJournal = ssJournal.getSheetByName('sheet1');
+  //find correct journalrow of position getting updated
+  var range = sheetJournal.getRange("A4:A").getValues();
+  var journLength = (range.filter(String).length);       //iterate length
+  var journRow = 3;
+  //from journal
+  var journSym = sheetJournal.getRange(4, 4, journLength).getValues();
+  var journStatus = sheetJournal.getRange(4, 3, journLength).getValues();
+  //journal updates for scale functions
+  if(scale == 1){ //scale out
+    scaleOutJourn(row,endPrice,endQuantity);
+    //parse open positions for matching symbol then update journal
+    for(var i=0; i < journLength; i++){
+      ++journRow;
+      if(journStatus[i][0] == 'open'){
+        if(symbol == journSym[i][0]){
+          sheetJournal.getRange(journRow, 7).setValue(origQuantity-endQuantity);
+          sheetJournal.getRange(journRow, 8).setValue(origPrice);
+          break;
+        }
+      }
+    }
+  }
+  else{  //scale in
+    //parse open positions for matching symbol then update journal
+    for(var i=0; i < journLength; i++){
+      ++journRow;
+      if(journStatus[i][0] == 'open'){
+        if(symbol == journSym[i][0]){
+          sheetJournal.getRange(journRow, 7).setValue(endQuantity);
+          sheetJournal.getRange(journRow, 8).setValue(endPrice);
+          break;
+        }
+      }
+    }
+  }
+}
+
+/**
+ *  Calculates new average fill when scaling into a positions
+ *  @param price_1 original price bought
+ *  @param quant_1 original quantity bought
+ *  @param price_2 new price bought
+ *  @param quant_2 new quantity bought
+ *  @return new average fill
+ */
+function calcCore(price_1,quant_1,price_2,quant_2){
+  var endQuantity = quant_1+quant_2;
+  var perc_1 = quant_1/endQuantity;
+  var perc_2 = quant_2/endQuantity;
+  var corePrice = (perc_1*price_1)+(perc_2*price_2);
+  return corePrice;
+}
+
+/**
+ *  Function for updating journal when scaling out of position
+ *  Logs new trade in journal of price scaled out at
+ *  Updates original trade in journal of new quantity held
+ *  Updates cryptoCalcPositions spreadsheet of new quantity
+ *  @param row row of position scaling out
+ *  @param endPrice price sold at
+ *  @param endQuantity amount sold
+ */
+function scaleOutJourn(row,endPrice,endQuantity){
+  //Postions Data
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //Journal Data
+  var ssJournal = SpreadsheetApp.openById('11_npO6TNL8FwYgG78cYJxlnX3h7zf139O4vQC6lch-A');
+  var sheetJournal = ssJournal.getSheetByName('sheet1');
+  //get values to log in journal
+  var symbol = sheet.getRange(row, 2).getValue();         //ticker
+  var positionType = sheet.getRange(row, 3).getValue();
+  var quantity = sheet.getRange(row, 4).getValue();
+  var date = sheet.getRange(row, 6).getValue();
+  var avgFill = sheet.getRange(row, 8).getValue();
+  //finds row to edit in journal
+  var range = sheetJournal.getRange("A4:A").getValues();
+  var journRow = (range.filter(String).length)+4;       //row to enter on journal
+  //plots
+  sheetJournal.getRange(journRow, 1).setValue(date);
+  sheetJournal.getRange(journRow, 2).setValue(positionType);
+  sheetJournal.getRange(journRow, 3).setValue('closed');
+  sheetJournal.getRange(journRow, 4).setValue(symbol);
+  sheetJournal.getRange(journRow, 6).setValue('buy limit');
+  sheetJournal.getRange(journRow, 7).setValue(endQuantity);
+  sheetJournal.getRange(journRow, 8).setValue(avgFill);
+  sheetJournal.getRange(journRow,11).setValue(endPrice);
+  sheetJournal.getRange(journRow,1,1,19).setBackground('orange');
+}
+
+/**
+ *  Calculates portfolio affected after percentages of lose from .25% to 2.50% in increments of .25%
+ *  @param portVal total value of portfoloio pulled from cryptoCalcPositions
+ *  @return array of the affected portfolio
+*/
+function calcMaxLoss(portVal){
+  var lossOfEquity = .0025;
+  var arr = [0,1,2,3,4,5,6,7,8,9];
+  for(var i=0; i<10; i++){
+    var dollarAffect = lossOfEquity * portVal;
+    arr[i] = dollarAffect;
+    lossOfEquity += .0025;
+  }
+  return arr;
+}
+
+/**
+ *  Main calc function used to iterate through positions and update spreadsheet
+ *  @param rr value determines amount of risk to calculate
+*/
+function riskRewardCalc(rr){
+  //Positions data
+  var ss = SpreadsheetApp.openById('167cdupFW00PklfXZ6f20J4Ub8gW0FGsLGnegjMKF5NI');
+  var sheet = ss.getSheets()[0];
+  //Position info
+  var orderType = sheet.getRange('C4:C7').getValues();
+  var entry = sheet.getRange('D4:D7').getValues();
+  var positionSize = sheet.getRange('I4:I7').getValues();
+  var lotSize = sheet.getRange('H4:H7').getValues();
+  // riskReward settings
+  var portVal = sheet.getRange('C25').getValue()    //portfolio value
+  var maxLossArr = calcMaxLoss(portVal);
+  var percentML = .0025;
+  var maxLoss_rr = sheet.getRange('O32').setValue(maxLossArr[rr]);   //HERE SET maxLoss amount
+  //percent loss&gain setup
+  var loss_gain = []
+  var percentLoss = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19,
+                     0.2, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.35, 0.40, 0.45, 0.50];
+  var percentGain = [0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22, 0.24 , 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38,
+                     0.4 , 0.42, 0.44, 0.46, 0.48, 0.5, 0.52, 0.54, 0.56, 0.58, 0.60, 0.70, 0.80, 0.90, 1];
+  loss_gain.push(percentLoss);
+  loss_gain.push(percentGain);
+  //populate 2D arrays of stop prices and percent portfolio vals
+  var stopPrice_rr = [];
+  var percentPortfolio = [];
+  var temp;
+  for(var i=0; i< orderType.filter(String).length; i++){
+    var price = [];
+    var calcForPerPort = []
+    for(var x=0; x<33; x++){
+      temp = maxLossArr[rr]/loss_gain[0][x];
+      price.push((entry[i][0] ) - (entry[i][0] * loss_gain[0][x]));
+      calcForPerPort.push(temp/portVal);
+    }
+    stopPrice_rr.push(price);
+    percentPortfolio.push(calcForPerPort);
+  }
+  //prep data for stop calc
+  var stop = sheet.getRange('E4:E7');
+  var targetPercentGain = sheet.getRange('P4:P7');
+  var riskingSetting = sheet.getRange('V4:V7');
+  var tempStop = new Array(4);
+  var tempTarget = new Array(4);
+  var tempRiskSetting = new Array(4);
+  for (var i = 0; i < tempStop.length; i++) {
+    tempStop[i] = new Array(1);
+    tempTarget[i] = new Array(1);
+    tempRiskSetting[i] = new Array(1);
+  }
+  //stops calculated for positions active
+  var tempNum;
+  var loop1Index = 1;
+  loop1:
+  for (var symbol=0; symbol< orderType.filter(String).length ; symbol++) {
+    // Loop2 check position rr ROI
+    var loop2Index = 1;
+    loop2:
+    for(var positionSizeROI=32; positionSizeROI >= 0; positionSizeROI--) {
+      if(positionSize[symbol][0] <= percentPortfolio[symbol][positionSizeROI]) {
+        if(positionSizeROI == 32) {
+          tempStop[symbol][0] = stopPrice_rr[symbol][positionSizeROI];
+          tempTarget[symbol][0] = loss_gain[1][positionSizeROI];
+          tempRiskSetting[symbol][0] = maxLossArr[rr];
+          tempNum = checkLossPercentDiff(maxLossArr[rr], tempStop[symbol][0],entry[symbol][0], lotSize[symbol][0]);
+          tempStop[symbol][0] = tempNum;
+          break loop2;
+        }
+         // HERE we found the correct stop loss and we set the position with this value
+        tempStop[symbol][0] = stopPrice_rr[symbol][positionSizeROI+1];
+        // Now grab the percentGain from ROI table and update PercentTargetGain
+        tempTarget[symbol][0] = loss_gain[1][positionSizeROI+1];
+        // Update the risking setting field
+        tempRiskSetting[symbol][0] = maxLossArr[rr];
+        tempNum = checkLossPercentDiff(maxLossArr[rr], tempStop[symbol][0],entry[symbol][0], lotSize[symbol][0]);
+        tempStop[symbol][0] = tempNum;
+        break loop2;
+      }
+      // HERE if the position size is larger than availble %portfolio from ROI table
+      if( (positionSize[symbol][0]  >  percentPortfolio[symbol][positionSizeROI]) && positionSizeROI == 0) {
+        tempStop[symbol][0] = stopPrice_rr[symbol][positionSizeROI];
+        tempTarget[symbol][0] = loss_gain[1][positionSizeROI];
+        tempRiskSetting[symbol][0] = maxLossArr[rr];
+        tempNum = checkLossPercentDiff(maxLossArr[rr], tempStop[symbol][0],entry[symbol][0], lotSize[symbol][0]);
+        tempStop[symbol][0] = tempNum;
+        break loop2;
+      }
+      loop2Index++;
+    }
+    loop1Index++;
+  }
+  stop.setValues(tempStop);
+  targetPercentGain.setValues(tempTarget);
+  riskingSetting.setValues(tempRiskSetting);
+}
+
+/**
+ *  Find percentage loss of trade, used to validates risk-reward settings to check max loss is acceptable
+ *  @param maxLoss max loss of capital willing to take
+ *  @param tempStop initial stop
+ *  @param entry price bought at
+ *  @param lotSize quantity bought
+ *  @return tempStop new stop to be used
+ */
+function checkLossPercentDiff(maxLoss, tempStop, entry, lotSize) {
+  // Coordinates of initial loss
+  var lossAtStop = (entry - tempStop)*lotSize;
+  var positionStopLossSetting = tempStop;
+  loop1:
+  while(1) {
+    if(isPercentDiffBelow5(lossAtStop, maxLoss) || entry == "" || lossAtStop < maxLoss) {
+      break loop1;
+    }
+    if( (positionStopLossSetting+0.02) < entry ) {
+      tempStop += 0.01
+      lossAtStop = (entry - tempStop)*lotSize;
+    } else {
+      break loop1;
+    }
+  }
+  return tempStop;
+}
+
+/**
+ *  Checks if percentDiff calculation is below 5%
+ *  @param lossAtStop initial loss at stop
+ *  @param maxLoss max loss of capital willing to take
+ *  @return 1 if stop is valid
+ */
+function isPercentDiffBelow5(lossAtStop, maxLoss) {
+  // Initial percent diff
+  var avg = (lossAtStop + maxLoss)/2;
+  var percentDiff = (Math.abs(lossAtStop - maxLoss)/avg)*100;
+
+  //Logger.log('percentDiff = ' +percentDiff);
+  if (percentDiff < 5)
+    return 1;
+  else
+    return 0;
+}
+
+function riskReward_calc_025() {
+  riskRewardCalc(0);
+
+}
+
+function riskReward_calc_050() {
+  riskRewardCalc(1);
+
+}
+
+function riskReward_calc_075() {
+  riskRewardCalc(2);
+}
+
+function riskReward_calc_100() {
+  riskRewardCalc(3);
+}
+
+function riskReward_calc_125() {
+  riskRewardCalc(4);
+}
+
+function riskReward_calc_150() {
+  riskRewardCalc(5);
+}
+
+function riskReward_calc_175() {
+  riskRewardCalc(6);
+}
+
+function riskReward_calc_200() {
+  riskRewardCalc(7);
+}
+
+function riskReward_calc_225() {
+  riskRewardCalc(8);
+}
+
+function riskReward_calc_250() {
+  riskRewardCalc(9);
+}
+
+/**
+ *  Function called from sub menu specifying 1 positions individual risk reward settings
+ */
+function changeSymbolRR() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+
+  var portVal = sheet.getRange('C25').getValue();    //portfolio value
+
+  var ticker = ui.prompt('Configure Ticker RR', 'Which Ticker to change?', ui.ButtonSet.OK);
+  var rr = ui.prompt('Adjust RR', 'Select number of RR ratio to use \n1  0.25% \n2  0.50% \n3  0.75% \n \
+                      4  1.00% \n5  1.25% \n6  1.50% \n7  1.75% \n8  2.00% \n9  2.25% \n10  2.50% \n11  Custom', ui.ButtonSet.OK);
+
+  var maxLoss = getRRMaxLoss(rr.getResponseText(),portVal);
+
+  riskReward_calc1Ticker(ticker.getResponseText(), maxLoss);
+}
+/**
+ *  User inputs max lose
+ *  @param rr risk reward percentage entered from user
+ *  @param portVal total capital in portfolio
+ *  @return rr chosen
+ */
+function getRRMaxLoss(rr,portVal) {
+  var ui = SpreadsheetApp.getUi();
+  var maxLossArr = calcMaxLoss(portVal);
+  // Pull the RR value
+  switch (rr) {
+    case '1':
+      //0.25%
+      var maxLoss = maxLossArr[0];
+      break;
+    case '2':
+      //0.50%
+      var maxLoss = maxLossArr[1];
+      break;
+    case '3':
+      //0.75%
+      var maxLoss = maxLossArr[2];
+      break;
+    case '4':
+      //1.00%
+      var maxLoss = maxLossArr[3]
+      break;
+    case '5':
+      //1.25%
+      var maxLoss = maxLossArr[4];
+      break;
+    case '6':
+      //1.50%
+      var maxLoss = maxLossArr[5];
+      break;
+    case '7':
+      //1.75%
+      var maxLoss = maxLossArr[6];
+      break;
+    case '8':
+      //2.00%
+      var maxLoss = maxLossArr[7];
+      break;
+    case '9':
+      //2.25%
+      var maxLoss = maxLossArr[8]
+      break;
+    case '10':
+      //2.50%
+      var maxLoss = maxLossArr[9]
+      break;
+    case '11':
+      //Custom
+      var rr = ui.prompt('Custom MaxLoss', 'Set MaxLoss for new RR calculation', ui.ButtonSet.OK);
+      var maxLoss = rr.getResponseText();
+      break;
+    default:
+      //0.25% just set to this
+      var maxLoss = maxLossArr[0]
+  }
+  return maxLoss;
+}
+
+/**
+ *  performs same risk reward function just on individual position with it's own parameters
+ *  @param ticker user enters stock label
+ *  @param maxLoss user enters maxLoss
+*/
+function riskReward_calc1Ticker(ticker, maxLoss){
+  // Positions
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  var data = ss.getDataRange().getValues();
+  var ticker_row;
+  // Loop through all the data in a sheet
+  for (var i = 0; i<data.length; i++) {
+    for (var j = 0; j<data[i].length; j++) {
+      if(data[i][j] == ticker) {
+          ticker_row = i;
+      }
+    }
+  }
+  var indx = ticker_row +1;
+  // Position settings
+  var orderType = sheet.getRange('C'+indx).getValue();
+  var entry = sheet.getRange('D'+indx).getValue();
+  var positionSize = sheet.getRange('I'+indx).getValue();
+  var lotSize = sheet.getRange('H'+indx).getValue();
+  // rr settings
+  var portVal = sheet.getRange('C25').getValue();    //portfolio value
+  sheet.getRange('O32').setValue(maxLoss);   //HERE SET maxLoss amount
+  //percent loss&gain setup
+  var loss_gain = [];
+  var percentLoss = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19,
+                     0.2, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.35, 0.40, 0.45, 0.50];
+  var percentGain = [0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22, 0.24 , 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38,
+                     0.4 , 0.42, 0.44, 0.46, 0.48, 0.5, 0.52, 0.54, 0.56, 0.58, 0.60, 0.70, 0.80, 0.90, 1];
+  loss_gain.push(percentLoss);
+  loss_gain.push(percentGain);
+  var stopPrice_rr = [];
+  var percentPortfolio = [];
+  var temp;
+  for(var x=0; x<33; x++){
+    temp = maxLoss/loss_gain[0][x];
+    stopPrice_rr.push((entry ) - (entry * loss_gain[0][x]));
+    percentPortfolio.push(temp/portVal);
+  }
+  var stop = sheet.getRange('E'+indx);
+  var targetPercentGain = sheet.getRange('P'+indx);
+  var riskingSetting = sheet.getRange('V'+indx);
+  var tempStop;
+  var tempTarget;
+  var tempRiskSetting;
+  // Loop through symbols find position to place new symbol
+  var tempNum;
+  var loop1Index = 1;
+  var symbol = 0;
+  //loop1:
+    // Loop2 check position rr ROI
+    var loop2Index = 1;
+    loop2:
+    for(var positionSizeROI=32; positionSizeROI >= 0; positionSizeROI--) {
+      if(positionSize <= percentPortfolio[positionSizeROI]) {
+        if(positionSizeROI == 32) {
+          tempStop  = stopPrice_rr[positionSizeROI];
+          tempTarget =  loss_gain[1][positionSizeROI];
+          tempRiskSetting = maxLoss;
+          tempNum = checkLossPercentDiff(maxLoss, tempStop, entry, lotSize);
+          tempStop = tempNum;
+          break loop2;
+        }
+         // HERE we found the correct stop loss and we set the position with this value
+        tempStop = stopPrice_rr[positionSizeROI+1];
+        // Now grab the percentGain from ROI table and update PercentTargetGain
+        tempTarget = loss_gain[1][positionSizeROI+1];
+        // Update the risking setting field
+        tempRiskSetting = maxLoss;
+        tempNum = checkLossPercentDiff(maxLoss, tempStop, entry, lotSize);
+        tempStop = tempNum;
+        break loop2;
+      }
+      // HERE if the position size is larger than availble %portfolio from ROI table
+      if( (positionSize  >  percentPortfolio[positionSizeROI]) && positionSizeROI == 0) {
+        tempStop = stopPrice_rr[positionSizeROI];
+        tempTarget = loss_gain[1][positionSizeROI];
+        tempRiskSetting = maxLoss;
+        tempNum = checkLossPercentDiff(maxLoss, tempStop,entry, lotSize);
+        tempStop = tempNum;
+        break loop2;
+      }
+      loop2Index++;
+    }
+  //loop1Index++;
+  stop.setValue(tempStop);
+  targetPercentGain.setValue(tempTarget);
+  riskingSetting.setValue(tempRiskSetting);
+}
