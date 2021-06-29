@@ -1,6 +1,4 @@
 __pycache__
-candlestick.html
-database/docker-compose.yml
-database/dockerhelp.txt
-database/requirements
+docker-compose.yml
+*.txt
 
