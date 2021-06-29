@@ -31,13 +31,13 @@ WATCHLIST = (
 
 
 async def rate_limiter(ticker):
-    """ Combat coinbase pro 10 request per second rate limit
+    """ Coinbase pro limits 10 request per second
     :param ticker:
     :return:
     """
     for x, sym in enumerate(WATCHLIST):
         if sym == ticker:
-            await asyncio.sleep(0.1+(x/10))
+            await asyncio.sleep(0.11 + (x / 10))
 
 
 async def clear_table(pool):
@@ -225,21 +225,18 @@ async def get_6hour_candles(base_info, pool):
     _6hour_td = td(days=50)
     base_url = base_info[2] + f'products/{base_info[1]}/candles'
     params = {'granularity': 21600}
+    await rate_limiter(base_info[1])
     async with aiohttp.ClientSession() as session:
         for i in range(7):
             async with session.get(url=base_url, params=params) as resp:
-                print(len(asyncio.all_tasks()))
                 print(resp.status)
-                print(resp.real_url)
                 candles_resp = await resp.json()
                 if len(candles_resp) == 0:
-                    print('found')
                     return 0
                 end_date = dt.fromtimestamp(candles_resp[-1][0]).replace(tzinfo=None)
                 start_date = end_date - _6hour_td
-                await rate_limiter(base_info[1])
+                await asyncio.sleep(0.1)
                 params = {'granularity': 21600, 'start': start_date.isoformat(), 'end': end_date.isoformat()}
-    print('done')
 
 
 async def main():
@@ -266,8 +263,10 @@ async def main():
                                  start,  # Start time of db writes
                                  now)  # End time of db writes
 
-        #candles = await asyncio.gather(* [get_6hour_candles(base_info[ticker], pool) for ticker in base_info])
+        candles = await (asyncio.gather(* [get_6hour_candles(base_info[ticker], pool) for ticker in base_info]))
+
         await clear_table(pool)
+
         # await update_watchlist(pool)
         #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
 

@@ -1,9 +1,13 @@
 from cryptography.fernet import Fernet
+import os
 
-with open('./creds/postgres_key.bin', 'rb') as file_object:
+key_path = os.path.expanduser("~/creds/postgres_key.bin")
+pwd_path = os.path.expanduser("~/creds/postgres_pwd.bin")
+
+with open(key_path, 'rb') as file_object:
     for line in file_object:
         encrypted_key = line
-with open('./creds/postgres_pwd.bin', 'rb') as file_object:
+with open(pwd_path, 'rb') as file_object:
     for line in file_object:
         encrypted_pwd = line
 # generate cipher_suite using key
