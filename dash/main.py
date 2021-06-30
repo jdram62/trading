@@ -1,11 +1,7 @@
 import pandas as pd
 import config
 
-from math import pi
-from bokeh.driving import count
-from bokeh.layouts import column, gridplot, row
-from bokeh.models import ColumnDataSource, Select, Slider
-from bokeh.plotting import curdoc, figure, show, output_file
+from bokeh.plotting import figure, show, output_file
 
 import asyncio
 import asyncpg
@@ -61,22 +57,20 @@ if __name__ == '__main__':
         inc = df.close > df.open
         dec = df.open > df.close
         TOOLS = "pan,wheel_zoom,box_zoom,reset,save"
-        w = 12 * 60 * 60 * 1000  # half day in ms
+        w = 43200000 # 12Hours in milliseconds
 
-        p1 = figure(x_axis_type="datetime", tools=TOOLS, plot_width=1750,plot_height=400, title=sym)
-        p1.xaxis.major_label_orientation = pi / 4
-        p1.grid.grid_line_alpha = 0.3
+        p1 = figure(x_axis_type="datetime", tools=TOOLS, plot_width=1500,plot_height=600, title=sym)
+        p1.xaxis.major_label_orientation = 3 / 4
+        p1.grid.grid_line_alpha = 0.1
 
         p1.segment(df.date, df.high, df.date, df.low, color="black")
-        p1.vbar(df.date[inc], w, df.open[inc], df.close[inc], fill_color="#D5E1DD", line_color="black")
-        p1.vbar(df.date[dec], w, df.open[dec], df.close[dec], fill_color="#F2583E", line_color="black")
+        p1.vbar(df.date[inc], w, df.open[inc], df.close[inc], fill_color="green", line_color="black")
+        p1.vbar(df.date[dec], w, df.open[dec], df.close[dec], fill_color="red", line_color="black")
 
         output_file("candlestick.html", title=sym)
 
         show(p1)
 
-    #curdoc().add_root(, toolbar_location="left", width=1000)
-    #curdoc().title = "OHLC"
 
 
 
