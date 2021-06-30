@@ -31,7 +31,7 @@ CREATE TABLE dollarBars(
 
 CREATE INDEX ON dollarBars (ticker_id, dt DESC);
 
-CREATE TABLE timeBars(
+CREATE TABLE hourBars(
     ticker_id INTEGER NOT NULL,
     dt TIMESTAMP NOT NULL,
     open DECIMAL NOT NULL,
@@ -43,5 +43,5 @@ CREATE TABLE timeBars(
     CONSTRAINT fk_watchlist FOREIGN KEY (ticker_id) REFERENCES watchlist (id)
 );
 
-CREATE INDEX ON timeBars (ticker_id, dt DESC);
+CREATE INDEX ON hourBars (ticker_id, dt DESC);
 
