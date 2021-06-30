@@ -51,15 +51,14 @@ if __name__ == '__main__':
         df = pd.DataFrame(temp_list, columns=['date', 'open', 'high', 'low', 'close'])
         # df = df.set_index('date')
         df_list.append(df)
-
+    TOOLS = "pan,wheel_zoom,box_zoom,reset,save"
     for k, sym in enumerate(WATCHLIST):
         df = df_list[k]
         inc = df.close > df.open
         dec = df.open > df.close
-        TOOLS = "pan,wheel_zoom,box_zoom,reset,save"
-        w = 43200000 # 12Hours in milliseconds
+        w = 43200000  # 12Hours in milliseconds
 
-        p1 = figure(x_axis_type="datetime", tools=TOOLS, plot_width=1500,plot_height=600, title=sym)
+        p1 = figure(x_axis_type="datetime", tools=TOOLS, sizing_mode="stretch_both", title=sym)
         p1.xaxis.major_label_orientation = 3 / 4
         p1.grid.grid_line_alpha = 0.1
 
