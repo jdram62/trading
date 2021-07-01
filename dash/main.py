@@ -2,6 +2,7 @@ import pandas as pd
 import config
 
 from bokeh.plotting import figure, show, output_file
+from bokeh.models import DaysTicker
 
 import asyncio
 import asyncpg
@@ -20,7 +21,7 @@ WATCHLIST = (
 )
 
 
-async def read_db():
+async def read_vol_candles():
     """
     :return:
     """
@@ -30,47 +31,62 @@ async def read_db():
             candles = await conn.fetch("""
                 SELECT * FROM volumeBars  
             """)
+    return candles
 
+
+async def read_daily_candles():
+    async with asyncpg.create_pool(database="crypto", host="localhost",
+                                   user="postgres", password=config.DB_PWD) as pool:
+        async with pool.acquire() as conn:
+            candles = await conn.fetch("""
+                SELECT * FROM dailyBars  
+            """)
     return candles
 
 
 async def main():
-    candles = await read_db()
-    return candles
+    vol_candles = await read_vol_candles()
+    daily_candles = await read_daily_candles()
+    df_dict = {}
+    for x, ticker in enumerate(WATCHLIST):
+        vol_list = []
+        daily_list = []
+        for row in vol_candles:
+            if x + 1 == row[0]:
+                vol_list.append([row[1], row[2], row[3], row[4], row[5], row[6]])
+        for row in daily_candles:
+            if x + 1 == row[0]:
+                daily_list.append([row[1], row[2], row[3], row[4], row[5], row[6]])
+        df_vol = pd.DataFrame(vol_list, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+        df_daily = pd.DataFrame(daily_list, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+        df_dict[ticker] = [df_vol, df_daily]
+    return df_dict
 
 
 if __name__ == '__main__':
 
-    candles_ret = asyncio.run(main())
-    df_list = []
-    for x, ticker in enumerate(WATCHLIST):
-        temp_list = []
-        for row in candles_ret:
-            if x+1 == row[0]:
-                temp_list.append([row[1], row[2], row[3], row[4], row[5]])
-        df = pd.DataFrame(temp_list, columns=['date', 'open', 'high', 'low', 'close'])
-        # df = df.set_index('date')
-        df_list.append(df)
+    dfs = asyncio.run(main())
     TOOLS = "pan,wheel_zoom,box_zoom,reset,save"
+
     for k, sym in enumerate(WATCHLIST):
-        df = df_list[k]
-        inc = df.close > df.open
-        dec = df.open > df.close
+        df_vol_candles = dfs[sym][0]
+        df_daily_candles = dfs[sym][1]
+        inc = df_vol_candles.close > df_vol_candles.open
+        dec = df_vol_candles.open > df_vol_candles.close
         w = 43200000  # 12Hours in milliseconds
 
-        p1 = figure(x_axis_type="datetime", tools=TOOLS, sizing_mode="stretch_both", title=sym)
+        p1 = figure(x_axis_type="datetime",
+                    tools=TOOLS, sizing_mode="stretch_both", title=sym)
         p1.xaxis.major_label_orientation = 3 / 4
         p1.grid.grid_line_alpha = 0.1
+        p1.xaxis.ticker.desired_num_ticks = 50
 
-        p1.segment(df.date, df.high, df.date, df.low, color="black")
-        p1.vbar(df.date[inc], w, df.open[inc], df.close[inc], fill_color="green", line_color="black")
-        p1.vbar(df.date[dec], w, df.open[dec], df.close[dec], fill_color="red", line_color="black")
+        p1.segment(df_vol_candles.date, df_vol_candles.high, df_vol_candles.date, df_vol_candles.low, color="black")
+        p1.vbar(df_vol_candles.date[inc], w, df_vol_candles.open[inc],
+                df_vol_candles.close[inc], fill_color="green", line_color="black")
+        p1.vbar(df_vol_candles.date[dec], w, df_vol_candles.open[dec],
+                df_vol_candles.close[dec], fill_color="red", line_color="black")
 
         output_file("candlestick.html", title=sym)
 
         show(p1)
-
-
-
-
-

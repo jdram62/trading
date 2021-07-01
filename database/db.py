@@ -70,7 +70,7 @@ async def update_watchlist(pool) -> None:
                         """, j + 1, ticker)
 
 
-async def write_vol_bars(conn, candles):
+async def write_vol_candles(conn, candles):
     """ DB write
     :param conn: Pool connection already established
     :param candles: Volume list ready to write
@@ -171,14 +171,14 @@ async def get_trades(base_info, pool):
                             trades = np.array(trades)
                             trades = np.flipud(trades)
                             vol_candles = await build_vol_candles(trades, base_info)
-                            await write_vol_bars(conn, vol_candles)
+                            await write_vol_candles(conn, vol_candles)
                             return 0
                         # Buffer write
                         elif responses == 50000:
                             trades = np.array(trades)
                             trades = np.flipud(trades)
                             vol_candles = await build_vol_candles(trades, base_info)
-                            await write_vol_bars(conn, vol_candles)
+                            await write_vol_candles(conn, vol_candles)
                             responses = 0
                             trades = []
                         # 12 hours elapsed write
@@ -186,7 +186,7 @@ async def get_trades(base_info, pool):
                             trades = np.array(trades)
                             trades = np.flipud(trades)
                             vol_candles = await build_vol_candles(trades, base_info)
-                            await write_vol_bars(conn, vol_candles)
+                            await write_vol_candles(conn, vol_candles)
                             reference_times[0] = reference_times[0] - (base_info[6] * 2)
                             responses = 0
                             trades = []
@@ -195,14 +195,14 @@ async def get_trades(base_info, pool):
                             trades = np.array(trades)
                             trades = np.flipud(trades)
                             vol_candles = await build_vol_candles(trades, base_info)
-                            await write_vol_bars(conn, vol_candles)
+                            await write_vol_candles(conn, vol_candles)
                             reference_times[1] = reference_times[1] - (base_info[6] * 2)
                             responses = 0
                             trades = []
                     # continue iteration
                     params = {'limit': '1000', 'after': resp.headers['Cb-After']}
                     # optimize sleep timer
-                    await asyncio.sleep(.1)
+                    await asyncio.sleep(.05)
 
 
 async def get_daily_candles(base_info, pool):
@@ -246,15 +246,15 @@ async def main():
                                  candle_buffer)  # delta of candle buffer, calculated from 6Hour candles
 
         print('clear done')
-        await clear_daily_table(pool)
-        done = await (asyncio.gather(* [get_daily_candles(base_info[ticker], pool) for ticker in base_info]))
+        #await clear_daily_table(pool)
+        #done = await (asyncio.gather(* [get_daily_candles(base_info[ticker], pool) for ticker in base_info]))
         #await clear_table(pool)
         # await update_watchlist(pool)
         #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
         # candles = await (asyncio.gather(* [get_6hour_candles(base_info[ticker], pool) for ticker in base_info]))
-        #await clear_table(pool)
+        await clear_volbars_table(pool)
         #await update_watchlist(pool)
-        #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
+        done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
         # await get_trades(base_info['CRV-USD'], pool)
         print('done')
         # await get_trades(base_info['ETH-USD'], pool)
