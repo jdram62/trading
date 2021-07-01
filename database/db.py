@@ -33,10 +33,10 @@ async def rate_limiter(ticker):
     """
     for x, sym in enumerate(WATCHLIST):
         if sym == ticker:
-            await asyncio.sleep(0.11 + (x / 10))
+            await asyncio.sleep(0.1 + (x / 10))
 
 
-async def clear_table(pool):
+async def clear_volbars_table(pool):
     """
     :param pool: Database pool
     :return:
@@ -44,6 +44,13 @@ async def clear_table(pool):
     async with pool.acquire()as conn:
         await conn.execute("""
             DELETE FROM volumeBars;
+        """)
+
+
+async def clear_daily_table(pool):
+    async with pool.acquire()as conn:
+        await conn.execute("""
+            DELETE FROM dailyBars;
         """)
 
 
@@ -78,23 +85,26 @@ async def write_vol_bars(conn, candles):
     print('db write done')
 
 
-async def write_6h_candles(conn, candles):
+async def write_daily_candles(conn, candles, db_id):
     """
+    :param db_id:
     :param conn:
     :param candles:
     :return:
     """
     for candle in candles:
-        print(candle)
+        candle.insert(0, db_id)
+        candle[1] = dt.fromtimestamp(candle[1], tz=tz.utc).replace(tzinfo=None)
         await conn.execute("""
-            INSERT INTO timeBars(ticker_id, dt, open, high, low, close, volume)
+            INSERT INTO dailyBars(ticker_id, dt, open, high, low, close, volume)
             VALUES ($1, $2, $3, $4, $5, $6, $7);
-        """, candle[0], candle[1], candle[2], candle[3], candle[4], candle[5], candle[6])
+        """, candle[0], candle[1], candle[4], candle[3], candle[2], candle[5], candle[6])
+    print(candles)
     print('db write done')
 
 
 async def build_vol_candles(trades, base_info):
-    """ builds vol_candle
+    """ builds vol_candle, add dollar candles(same thing except denominated by USD value instead of vol)
     :param trades:  numpy array of trades containing [time, price, quantity]
     :param base_info: Dict of Tuples containing necessary info per ticker
     :return: datetime of where to continue build
@@ -138,8 +148,10 @@ async def get_trades(base_info, pool):
     base_url = base_info[2] + f'products/{base_info[1]}/trades'
     trades = []
     responses = 0
+    # Holds trades in memory until half day or buffer is full
     reference_times = [base_info[4].replace(hour=12, minute=0, second=0, microsecond=0),
                        base_info[4].replace(hour=0, minute=0, second=0, microsecond=0)]
+    # Preparation for loop, determines which half day is closer to current time
     if reference_times[0] < base_info[4]:
         reference_times[1] = reference_times[1] - (base_info[6] * 2)
     else:
@@ -149,17 +161,19 @@ async def get_trades(base_info, pool):
             async with pool.acquire() as conn:
                 async with session.get(url=base_url, params=params) as resp:
                     print('\t', resp.status, base_info[1])
-                    responses += 1
+                    responses += 1  # Used to calc buffer
                     for trade in await resp.json():
                         trade_time = parse(trade['time'])
                         trade_time = trade_time.replace(microsecond=0, tzinfo=None)
                         trades.append((trade_time, float(trade['price']), float(trade['size'])))
+                        # Desired time to parse to is reached
                         if trade_time < base_info[5]:
                             trades = np.array(trades)
                             trades = np.flipud(trades)
                             vol_candles = await build_vol_candles(trades, base_info)
                             await write_vol_bars(conn, vol_candles)
                             return 0
+                        # Buffer write
                         elif responses == 50000:
                             trades = np.array(trades)
                             trades = np.flipud(trades)
@@ -167,6 +181,7 @@ async def get_trades(base_info, pool):
                             await write_vol_bars(conn, vol_candles)
                             responses = 0
                             trades = []
+                        # 12 hours elapsed write
                         elif trade_time < reference_times[0]:
                             trades = np.array(trades)
                             trades = np.flipud(trades)
@@ -175,6 +190,7 @@ async def get_trades(base_info, pool):
                             reference_times[0] = reference_times[0] - (base_info[6] * 2)
                             responses = 0
                             trades = []
+                        # 12 hours elapsed write
                         elif trade_time < reference_times[1]:
                             trades = np.array(trades)
                             trades = np.flipud(trades)
@@ -183,32 +199,27 @@ async def get_trades(base_info, pool):
                             reference_times[1] = reference_times[1] - (base_info[6] * 2)
                             responses = 0
                             trades = []
+                    # continue iteration
                     params = {'limit': '1000', 'after': resp.headers['Cb-After']}
+                    # optimize sleep timer
                     await asyncio.sleep(.1)
 
 
-async def get_6hour_candles(base_info, pool):
-    """ Get 350 days or till inception of 6 hour candles from Coinbase Pro &
-        add database write
+async def get_daily_candles(base_info, pool):
+    """ Get 300 daily candles or till inception from Coinbase Pro & database write
     :param base_info: Dict of Tuples containing necessary info per ticker
     :param pool: database pool
     :return:
     """
-    _6hour_td = td(days=50)
     base_url = base_info[2] + f'products/{base_info[1]}/candles'
-    params = {'granularity': 21600}
+    params = {'granularity': 86400}
     await rate_limiter(base_info[1])
     async with aiohttp.ClientSession() as session:
-        for i in range(7):
+        async with pool.acquire() as conn:
             async with session.get(url=base_url, params=params) as resp:
                 print(resp.status)
                 candles_resp = await resp.json()
-                if len(candles_resp) == 0:
-                    return 0
-                end_date = dt.fromtimestamp(candles_resp[-1][0]).replace(tzinfo=None)
-                start_date = end_date - _6hour_td
-                await asyncio.sleep(.11)
-                params = {'granularity': 21600, 'start': start_date.isoformat(), 'end': end_date.isoformat()}
+                await write_daily_candles(conn, candles_resp, base_info[0])
 
 
 async def main():
@@ -230,14 +241,16 @@ async def main():
                                  ticker,  # symbol
                                  url,  # base url endpoint
                                  temp_freq[i],  # Amount of vol needed for 1 vol candle close per ticker
-                                 now,
-                                 end,  # desired historical time to parse
-                                 candle_buffer)  # delta of candle buffer
+                                 now,  # Near program start time, replace with first write of websocket connect
+                                 end,  # desired historical time to parse, will replace later with most recent db write
+                                 candle_buffer)  # delta of candle buffer, calculated from 6Hour candles
 
-        # candles = await (asyncio.gather(* [get_6hour_candles(base_info[ticker], pool) for ticker in base_info]))
-        await clear_table(pool)
+        print('clear done')
+        # await clear_daily_table(pool)
+        candles = await (asyncio.gather(* [get_daily_candles(base_info[ticker], pool) for ticker in base_info]))
+        #await clear_table(pool)
         # await update_watchlist(pool)
-        done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
+        #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
         # await get_trades(base_info['CRV-USD'], pool)
         print('done')
         # await get_trades(base_info['ETH-USD'], pool)
