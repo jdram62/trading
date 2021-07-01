@@ -44,6 +44,7 @@ CREATE TABLE hourBars(
 );
 
 CREATE INDEX ON hourBars (ticker_id, dt DESC);
+<<<<<<< HEAD
 
 
 CREATE TABLE dollarBars(
@@ -57,5 +58,7 @@ CREATE TABLE dollarBars(
     PRIMARY KEY (ticker_id, dt),
     CONSTRAINT fk_watchlist FOREIGN KEY (ticker_id) REFERENCES watchlist (id)
 );
+=======
+>>>>>>> 5be8fed470f8ed2419de0c625e43128f3e32c0c5
 
 CREATE INDEX ON dollarBars (ticker_id, dt DESC);
