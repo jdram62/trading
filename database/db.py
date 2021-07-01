@@ -245,19 +245,16 @@ async def main():
                                  end,  # desired historical time to parse, will replace later with most recent db write
                                  candle_buffer)  # delta of candle buffer, calculated from 6Hour candles
 
-<<<<<<< HEAD
         print('clear done')
-        # await clear_daily_table(pool)
-        candles = await (asyncio.gather(* [get_daily_candles(base_info[ticker], pool) for ticker in base_info]))
+        await clear_daily_table(pool)
+        done = await (asyncio.gather(* [get_daily_candles(base_info[ticker], pool) for ticker in base_info]))
         #await clear_table(pool)
         # await update_watchlist(pool)
         #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
-=======
         # candles = await (asyncio.gather(* [get_6hour_candles(base_info[ticker], pool) for ticker in base_info]))
         #await clear_table(pool)
         #await update_watchlist(pool)
-        done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
->>>>>>> 5be8fed470f8ed2419de0c625e43128f3e32c0c5
+        #done = await asyncio.gather(*[get_trades(base_info[ticker], pool) for ticker in base_info])
         # await get_trades(base_info['CRV-USD'], pool)
         print('done')
         # await get_trades(base_info['ETH-USD'], pool)
