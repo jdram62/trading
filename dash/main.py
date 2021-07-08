@@ -1,13 +1,13 @@
 import pandas as pd
 import config
 
-from bokeh.layouts import gridplot, row, column
-from bokeh.plotting import figure, output_file, show
-from bokeh.models import Div
+from bokeh.io import curdoc, show
+from bokeh.plotting import figure
+from bokeh.models import Select, ColumnDataSource
+from bokeh.layouts import row, column
 from bokeh.models.tools import WheelZoomTool, PanTool, ResetTool, HoverTool
 
-import asyncio
-import asyncpg
+import psycopg2 as pg2
 
 WATCHLIST = (
     'BTC-USD',
@@ -23,100 +23,78 @@ WATCHLIST = (
 )
 
 
-async def read_vol_candles():
-    """
-    :return:
-    """
-    async with asyncpg.create_pool(database="crypto", host="localhost",
-                                   user="postgres", password=config.DB_PWD) as pool:
-        async with pool.acquire() as conn:
-            candles = await conn.fetch("""
-                SELECT * FROM volumeBars  
-            """)
-    return candles
+def nix(val, ticker_list):
+    return [i for i in ticker_list if i != val]
 
 
-async def read_daily_candles():
-    async with asyncpg.create_pool(database="crypto", host="localhost",
-                                   user="postgres", password=config.DB_PWD) as pool:
-        async with pool.acquire() as conn:
-            candles = await conn.fetch("""
-                SELECT * FROM dailyBars  
-            """)
-    return candles
+def read_vol_candles(ticker_id, connection):
+    with connection.cursor() as cursor:
+        cursor.execute("""
+                     SELECT dt, open, high, low, close, volume
+                     FROM volumeBars
+                     WHERE ticker_id= %s
+                     ORDER BY dt ASC;
+                 """, (ticker_id,))
+        candles = cursor.fetchall()
+    df = pd.DataFrame(candles, columns=['dt', 'o', 'h', 'l', 'c', 'v'])
+    df = df.set_index('dt')
+    return df
 
 
-async def main():
-    vol_candles = await read_vol_candles()
-    daily_candles = await read_daily_candles()
-    df_dict = {}
-    for x, ticker in enumerate(WATCHLIST):
-        vol_list = []
-        daily_list = []
-        for row in vol_candles:
-            if x + 1 == row[0]:
-                vol_list.append([row[1], row[2], row[3], row[4], row[5], row[6]])
-        for row in daily_candles:
-            if x + 1 == row[0]:
-                daily_list.append([row[1], row[2], row[3], row[4], row[5], row[6]])
-        df_vol = pd.DataFrame(vol_list, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df_daily = pd.DataFrame(daily_list, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df_dict[ticker] = [df_vol, df_daily]
-    return df_dict
+def read_daily_candles(ticker_id, connection):
+    with connection.cursor() as cursor:
+        cursor.execute("""
+                    SELECT dt, open, high, low, close, volume
+                    FROM dailyBars
+                    WHERE ticker_id= %s
+                    ORDER BY dt ASC;
+                """, (ticker_id,))
+        candles = cursor.fetchall()
+    df = pd.DataFrame(candles, columns=['dt', 'o', 'h', 'l', 'c', 'v'])
+    df = df.set_index('dt')
+    return df
 
 
 if __name__ == '__main__':
+    # for n in WATCHLIST:
+    #    print(nix(n, WATCHLIST))
+    conn = pg2.connect(host="localhost", database="crypto", user="postgres", password=config.DB_PWD)
+    conn.set_session(autocommit=True)
 
-    dfs = asyncio.run(main())
-    TOOLS = "pan,wheel_zoom,box_zoom,reset,save"
+    vc_df = read_vol_candles(1, conn)
+    print('start read')
+    dc_df = read_daily_candles(1, conn)
+    print('end read')
+    conn.close()
 
-    for k, sym in enumerate(WATCHLIST):
-        df_vol_candles = dfs[sym][0]
-        df_daily_candles = dfs[sym][1]
+    vol_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
+    daily_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
 
-        dc_inc = df_daily_candles.close > df_daily_candles.open
-        dc_dec = df_daily_candles.open > df_daily_candles.close
+    daily_candle_src.data = dc_df
 
-        vc_inc = df_vol_candles.close > df_vol_candles.open
-        vc_dec = df_vol_candles.open > df_vol_candles.close
+    dc_inc = dc_df.c > dc_df.o
+    dc_dec = dc_df.o > dc_df.c
 
-        w1 = 43200000 * 2 - 25
-        w2 = 3600000  # 1 Hour in milliseconds
+    vc_inc = vc_df.c > vc_df.o
+    vc_dec = vc_df.o > vc_df.c
 
-        # Daily Candles
-        p1 = figure(title=sym, x_axis_type="datetime", y_axis_type="log", height=400,
-                    sizing_mode="stretch_width", width=1500,
-                    tools=[WheelZoomTool(), PanTool(), ResetTool()])  # HoverTool for Date OHLCV to show on top/outside
-        # formatters= {'x': 'datetime'}
-        p1.xaxis.major_label_orientation = 3 / 4
-        p1.grid.grid_line_alpha = 0.1
-        p1.xaxis.ticker.desired_num_ticks = 25  # X axis tick every 4 hours
+    w1 = 43200000 * 2 - 25
+    w2 = 3600000  # 1 Hour in milliseconds
 
-        p1.segment(df_daily_candles.date, df_daily_candles.high,
-                   df_daily_candles.date, df_daily_candles.low, color="black")
-        p1.vbar(df_daily_candles.date[dc_inc], w1, df_daily_candles.open[dc_inc], df_daily_candles.close[dc_inc],
-                fill_color="green", line_color="black")
-        p1.vbar(df_daily_candles.date[dc_dec], w1, df_daily_candles.open[dc_dec], df_daily_candles.close[dc_dec],
-                fill_color="red", line_color="black")
+    # Daily Candles
+    p1 = figure(title='BTC-USD', x_axis_type="datetime", y_axis_type="log", height=700,
+                sizing_mode="stretch_width", width=1500,
+                tools=[WheelZoomTool(), PanTool(), ResetTool()])  # HoverTool for Date OHLCV to show on top/outside
+    # formatters= {'x': 'datetime'}
+    p1.xaxis.major_label_orientation = 3 / 4
+    p1.grid.grid_line_alpha = 0.1
+    p1.xaxis.ticker.desired_num_ticks = 25  # X axis tick every 4 hours
 
-        # Volume Bars
-        p2 = figure(title=sym, x_axis_type="datetime", y_axis_type="log",
-                    height=400, sizing_mode="stretch_both",
-                    tools=[WheelZoomTool(), PanTool(), ResetTool()])
-        # formatters= {'x': 'datetime'}
-        p2.xaxis.major_label_orientation = 3 / 4
-        p2.grid.grid_line_alpha = 0.1
-        p2.xaxis.ticker.desired_num_ticks = 50  # X axis tick every 4 hours
+    p1.segment(x0='dt', y0='l', x1='dt', y1='h', line_width=1, color='black', source=daily_candle_src)
+    # p1.vbar(x='dt', width=w1, top=, bottom=)
 
-        p2.segment(df_vol_candles.date, df_vol_candles.high, df_vol_candles.date, df_vol_candles.low, color="black")
-        p2.vbar(df_vol_candles.date[vc_inc], w2, df_vol_candles.open[vc_inc], df_vol_candles.close[vc_inc],
-                fill_color="green", line_color="black")
-        p2.vbar(df_vol_candles.date[vc_dec], w2, df_vol_candles.open[vc_dec], df_vol_candles.close[vc_dec],
-                fill_color="red", line_color="black")
-
-        output_file("candlestick.html", title=sym)
-
-        main_col = column(p1, p2)
-        show(main_col, sizing_mode="stretch_both")
-
-        #gridplot([[p1], [p2]], sizing_mode='stretch_both')
+    main_col = column(p1)
+    show(main_col)
+    # curdoc().add_root(main_col)
+    # curdoc().title = "crypto"
+    # gridplot([[p1], [p2]], sizing_mode='stretch_both')
