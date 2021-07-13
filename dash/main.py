@@ -1,9 +1,10 @@
 import pandas as pd
+import numpy as np
 import config
 
 from bokeh.io import curdoc, show
 from bokeh.plotting import figure
-from bokeh.models import Select, ColumnDataSource
+from bokeh.models import Select, ColumnDataSource, CustomJS
 from bokeh.layouts import row, column
 from bokeh.models.tools import WheelZoomTool, PanTool, ResetTool, HoverTool
 
@@ -23,12 +24,10 @@ WATCHLIST = (
 )
 
 
-def nix(val, ticker_list):
-    return [i for i in ticker_list if i != val]
-
-
-def read_vol_candles(ticker_id, connection):
-    with connection.cursor() as cursor:
+def read_vol_candles(ticker_id):
+    conn = pg2.connect(host="localhost", database="crypto", user="postgres", password=config.DB_PWD)
+    conn.set_session(autocommit=True)
+    with conn.cursor() as cursor:
         cursor.execute("""
                      SELECT dt, open, high, low, close, volume
                      FROM volumeBars
@@ -36,13 +35,16 @@ def read_vol_candles(ticker_id, connection):
                      ORDER BY dt ASC;
                  """, (ticker_id,))
         candles = cursor.fetchall()
+    conn.close()
     df = pd.DataFrame(candles, columns=['dt', 'o', 'h', 'l', 'c', 'v'])
     df = df.set_index('dt')
     return df
 
 
-def read_daily_candles(ticker_id, connection):
-    with connection.cursor() as cursor:
+def read_daily_candles(ticker_id):
+    conn = pg2.connect(host="localhost", database="crypto", user="postgres", password=config.DB_PWD)
+    conn.set_session(autocommit=True)
+    with conn.cursor() as cursor:
         cursor.execute("""
                     SELECT dt, open, high, low, close, volume
                     FROM dailyBars
@@ -50,51 +52,46 @@ def read_daily_candles(ticker_id, connection):
                     ORDER BY dt ASC;
                 """, (ticker_id,))
         candles = cursor.fetchall()
+    conn.close()
     df = pd.DataFrame(candles, columns=['dt', 'o', 'h', 'l', 'c', 'v'])
     df = df.set_index('dt')
+    condition = [df.c > df.o,
+                 df.c < df.o]
+    choices = ['green', 'red']
+    df['color'] = np.select(condition, choices)
     return df
 
 
-if __name__ == '__main__':
-    # for n in WATCHLIST:
-    #    print(nix(n, WATCHLIST))
-    conn = pg2.connect(host="localhost", database="crypto", user="postgres", password=config.DB_PWD)
-    conn.set_session(autocommit=True)
+# vc_df = read_vol_candles(1)
+dc_df = read_daily_candles(1)
 
-    vc_df = read_vol_candles(1, conn)
-    print('start read')
-    dc_df = read_daily_candles(1, conn)
-    print('end read')
-    conn.close()
+# widget set up
+select_options = list(ticker for ticker in WATCHLIST)
+ticker_select = Select(title='TICKER', value='BTC-USD', options=select_options, width=300)
 
-    vol_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
-    daily_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
+# set up plots
+# vol_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
+daily_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[], color=[]))
 
-    daily_candle_src.data = dc_df
+daily_candle_src.data = dc_df
 
-    dc_inc = dc_df.c > dc_df.o
-    dc_dec = dc_df.o > dc_df.c
+# Daily Candles
+p1 = figure(title='BTC-USD', x_axis_type="datetime", y_axis_type="log",
+            sizing_mode="stretch_both",
+            tools=[WheelZoomTool(), PanTool(), ResetTool()])  # HoverTool for Date OHLCV to show on top/outside
+p1.xaxis.major_label_orientation = 3 / 4
+p1.grid.grid_line_alpha = 0.1
+p1.xaxis.ticker.desired_num_ticks = 100  # 25 X axis tick every 4 hours
 
-    vc_inc = vc_df.c > vc_df.o
-    vc_dec = vc_df.o > vc_df.c
+p1.segment(x0='dt', y0='l', x1='dt', y1='h', line_width=2, color='black', source=daily_candle_src)
+p1.segment(x0='dt', y0='o', x1='dt', y1='c', line_width=8, color='color', source=daily_candle_src)
 
-    w1 = 43200000 * 2 - 25
-    w2 = 3600000  # 1 Hour in milliseconds
+# add update function for widget callbacks
 
-    # Daily Candles
-    p1 = figure(title='BTC-USD', x_axis_type="datetime", y_axis_type="log", height=700,
-                sizing_mode="stretch_width", width=1500,
-                tools=[WheelZoomTool(), PanTool(), ResetTool()])  # HoverTool for Date OHLCV to show on top/outside
-    # formatters= {'x': 'datetime'}
-    p1.xaxis.major_label_orientation = 3 / 4
-    p1.grid.grid_line_alpha = 0.1
-    p1.xaxis.ticker.desired_num_ticks = 25  # X axis tick every 4 hours
+widgets = column(ticker_select)
+series = column(p1)
+layout = column(widgets, series, sizing_mode='stretch_width')
 
-    p1.segment(x0='dt', y0='l', x1='dt', y1='h', line_width=1, color='black', source=daily_candle_src)
-    # p1.vbar(x='dt', width=w1, top=, bottom=)
+curdoc().add_root(layout)
+curdoc().title = "Dash"
 
-    main_col = column(p1)
-    show(main_col)
-    # curdoc().add_root(main_col)
-    # curdoc().title = "crypto"
-    # gridplot([[p1], [p2]], sizing_mode='stretch_both')
