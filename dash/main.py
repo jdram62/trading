@@ -63,21 +63,15 @@ def read_daily_candles(ticker_id):
 
 
 # vc_df = read_vol_candles(1)
-dc_df = read_daily_candles(1)
+# dc_df = read_daily_candles(1)
 
-# widget set up
-select_options = list(ticker for ticker in WATCHLIST)
-ticker_select = Select(title='TICKER', value='BTC-USD', options=select_options, width=300)
 
 # set up plots
 # vol_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[]))
 daily_candle_src = ColumnDataSource(data=dict(dt=[], o=[], h=[], l=[], c=[], v=[], color=[]))
 
-daily_candle_src.data = dc_df
-
 # Daily Candles
-p1 = figure(title='BTC-USD', x_axis_type="datetime", y_axis_type="log",
-            sizing_mode="stretch_both",
+p1 = figure(x_axis_type="datetime", y_axis_type="log", sizing_mode="stretch_both",
             tools=[WheelZoomTool(), PanTool(), ResetTool()])  # HoverTool for Date OHLCV to show on top/outside
 p1.xaxis.major_label_orientation = 3 / 4
 p1.grid.grid_line_alpha = 0.1
@@ -86,12 +80,31 @@ p1.xaxis.ticker.desired_num_ticks = 100  # 25 X axis tick every 4 hours
 p1.segment(x0='dt', y0='l', x1='dt', y1='h', line_width=2, color='black', source=daily_candle_src)
 p1.segment(x0='dt', y0='o', x1='dt', y1='c', line_width=8, color='color', source=daily_candle_src)
 
-# add update function for widget callbacks
+# widget set up
+select_options = list(ticker for ticker in WATCHLIST)
+ticker_select = Select(title='TICKER', value='BTC-USD', options=select_options, width=300)
+
+
+def function_to_call(attr, old, new):
+    update()
+
+
+def update():
+    # p1 = ticker_select.value
+    ticker_id = [x + 1 for x, ticker in enumerate(WATCHLIST) if ticker == ticker_select.value]
+    dc_df = read_daily_candles(ticker_id[0])
+    daily_candle_src.data = dc_df
+    p1.title.text = WATCHLIST[ticker_id[0]-1]
+
+
+ticker_select.on_change('value', function_to_call)
+
 
 widgets = column(ticker_select)
 series = column(p1)
 layout = column(widgets, series, sizing_mode='stretch_width')
 
+update()
+
 curdoc().add_root(layout)
 curdoc().title = "Dash"
-
